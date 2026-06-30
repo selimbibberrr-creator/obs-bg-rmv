@@ -1,0 +1,8 @@
+/build*/
+/release/
+.cmake/
+CMakeUserPresets.json
+*.user
+*.suo
+*.VC.db
+.DS_Store
