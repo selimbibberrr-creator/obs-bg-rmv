@@ -8,8 +8,22 @@ permissions:
   contents: read
 
 jobs:
+  runner-smoke:
+    name: Runner smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate repository inputs
+        shell: bash
+        run: |
+          test -f CMakeLists.txt
+          test -f buildspec.json
+          test -f src/plugin-main.cpp
+          test -f data/effects/smart_matte.effect
+
   windows-x64:
     name: Windows x64
+    needs: runner-smoke
     runs-on: windows-latest
     steps:
       - name: Checkout project
