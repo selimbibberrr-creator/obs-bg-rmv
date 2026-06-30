@@ -1,0 +1,56 @@
+name: Build OBS Smart Matte
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-x64:
+    name: Windows x64
+    runs-on: windows-latest
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+        with:
+          path: project
+
+      - name: Checkout official OBS plugin template
+        uses: actions/checkout@v4
+        with:
+          repository: obsproject/obs-plugintemplate
+          ref: master
+          path: template
+
+      - name: Overlay project onto template
+        shell: pwsh
+        run: |
+          Copy-Item project/CMakeLists.txt template/CMakeLists.txt -Force
+          Copy-Item project/buildspec.json template/buildspec.json -Force
+          Remove-Item template/src -Recurse -Force
+          Remove-Item template/data -Recurse -Force -ErrorAction SilentlyContinue
+          Copy-Item project/src template/src -Recurse -Force
+          Copy-Item project/data template/data -Recurse -Force
+
+      - name: Build and install plugin
+        shell: pwsh
+        working-directory: template
+        run: ./.github/scripts/Build-Windows.ps1 -Target x64 -Configuration RelWithDebInfo
+
+      - name: Create portable package
+        shell: pwsh
+        working-directory: template
+        run: |
+          $version = (Get-Content buildspec.json -Raw | ConvertFrom-Json).version
+          $package = "obs-smart-matte-$version-windows-x64.zip"
+          Compress-Archive -Path release/RelWithDebInfo/* -DestinationPath "release/$package" -Force
+          "PACKAGE_PATH=template/release/$package" >> $env:GITHUB_ENV
+
+      - name: Upload testable plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: obs-smart-matte-0.3.0-windows-x64
+          path: ${{ env.PACKAGE_PATH }}
+          if-no-files-found: error
