@@ -13,7 +13,7 @@ permissions:
 jobs:
   windows-x64:
     name: Windows x64
-    runs-on: windows-2022
+    runs-on: windows-latest
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
