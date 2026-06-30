@@ -1,14 +1,11 @@
 name: Build OBS Smart Matte
 
 on:
-  push:
-    branches: [main]
-    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   windows-x64:
@@ -50,7 +47,6 @@ jobs:
           $package = "obs-smart-matte-$version-windows-x64.zip"
           Compress-Archive -Path release/RelWithDebInfo/* -DestinationPath "release/$package" -Force
           "PACKAGE_PATH=template/release/$package" >> $env:GITHUB_ENV
-          "PACKAGE_NAME=$package" >> $env:GITHUB_ENV
 
       - name: Upload testable plugin
         uses: actions/upload-artifact@v4
@@ -58,10 +54,3 @@ jobs:
           name: obs-smart-matte-0.3.0-windows-x64
           path: ${{ env.PACKAGE_PATH }}
           if-no-files-found: error
-
-      - name: Publish tagged release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: ${{ env.PACKAGE_PATH }}
-          generate_release_notes: true
