@@ -1,0 +1,132 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform texture2d manual_mask;
+uniform texture2d previous_image;
+
+uniform bool use_history;
+uniform float2 texel_size;
+uniform int matte_mode;
+uniform float threshold;
+uniform float feather;
+uniform float edge_shift;
+uniform float center_protect;
+uniform float spatial_smoothing;
+uniform float temporal_smoothing;
+uniform float motion_sensitivity;
+uniform float despill;
+uniform bool invert_mask;
+uniform int preview_mode;
+
+sampler_state textureSampler {
+	Filter = Linear;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in)
+{
+	VertData vert_out;
+	vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv = v_in.uv;
+	return vert_out;
+}
+
+float3 StraightRgb(float4 rgba)
+{
+	return rgba.rgb * ((rgba.a > 0.00001) ? (1.0 / rgba.a) : 0.0);
+}
+
+float NormalizedDistance(float3 a, float3 b)
+{
+	return distance(a, b) * 0.57735026919;
+}
+
+float AutoAlpha(float2 uv, float3 rgb, float3 corner0, float3 corner1, float3 corner2, float3 corner3)
+{
+	float d = min(min(NormalizedDistance(rgb, corner0), NormalizedDistance(rgb, corner1)),
+		min(NormalizedDistance(rgb, corner2), NormalizedDistance(rgb, corner3)));
+	float adjusted = clamp(threshold + edge_shift, 0.001, 0.98);
+	float soft = max(feather, 0.0005);
+	float alpha = smoothstep(adjusted - soft, adjusted + soft, d);
+
+	float2 centered = (uv - float2(0.5, 0.5)) * float2(1.20, 1.0);
+	float center_weight = saturate(1.0 - length(centered));
+	float subject_evidence = smoothstep(max(0.002, adjusted * 0.10), max(0.01, adjusted * 0.75), d);
+	alpha = max(alpha, center_weight * center_protect * subject_evidence);
+	return saturate(alpha);
+}
+
+float4 PSSmartMatte(VertData v_in) : TARGET
+{
+	float2 uv = v_in.uv;
+	float4 source_rgba = image.Sample(textureSampler, uv);
+	float3 source_rgb = StraightRgb(source_rgba);
+
+	float3 corner0 = StraightRgb(image.Sample(textureSampler, float2(0.01, 0.01)));
+	float3 corner1 = StraightRgb(image.Sample(textureSampler, float2(0.99, 0.01)));
+	float3 corner2 = StraightRgb(image.Sample(textureSampler, float2(0.01, 0.99)));
+	float3 corner3 = StraightRgb(image.Sample(textureSampler, float2(0.99, 0.99)));
+
+	float auto_alpha = AutoAlpha(uv, source_rgb, corner0, corner1, corner2, corner3);
+	if (spatial_smoothing > 0.001) {
+		float3 left_rgb = StraightRgb(image.Sample(textureSampler, uv + float2(-texel_size.x, 0.0)));
+		float3 right_rgb = StraightRgb(image.Sample(textureSampler, uv + float2(texel_size.x, 0.0)));
+		float3 up_rgb = StraightRgb(image.Sample(textureSampler, uv + float2(0.0, -texel_size.y)));
+		float3 down_rgb = StraightRgb(image.Sample(textureSampler, uv + float2(0.0, texel_size.y)));
+		float neighbours =
+			AutoAlpha(uv, left_rgb, corner0, corner1, corner2, corner3) +
+			AutoAlpha(uv, right_rgb, corner0, corner1, corner2, corner3) +
+			AutoAlpha(uv, up_rgb, corner0, corner1, corner2, corner3) +
+			AutoAlpha(uv, down_rgb, corner0, corner1, corner2, corner3);
+		neighbours *= 0.25;
+		auto_alpha = lerp(auto_alpha, neighbours, spatial_smoothing * 0.72);
+	}
+
+	float alpha = (matte_mode == 1) ? 1.0 : auto_alpha;
+	if (invert_mask)
+		alpha = 1.0 - alpha;
+
+	if (use_history && temporal_smoothing > 0.001) {
+		float4 previous_rgba = previous_image.Sample(textureSampler, uv);
+		float3 previous_rgb = StraightRgb(previous_rgba);
+		float motion = NormalizedDistance(source_rgb, previous_rgb);
+		float cutoff = lerp(0.32, 0.025, motion_sensitivity);
+		float stable = 1.0 - smoothstep(cutoff * 0.5, cutoff, motion);
+		alpha = lerp(alpha, previous_rgba.a, temporal_smoothing * stable);
+	}
+
+	float2 manual = manual_mask.Sample(textureSampler, uv).rg;
+	if (matte_mode != 2) {
+		alpha *= (1.0 - manual.r);
+		alpha = max(alpha, manual.g);
+	}
+	alpha *= source_rgba.a;
+	alpha = saturate(alpha);
+
+	if (preview_mode == 1)
+		return float4(alpha, alpha, alpha, 1.0);
+	if (preview_mode == 2)
+		return float4(auto_alpha, auto_alpha, auto_alpha, 1.0);
+	if (preview_mode == 3)
+		return float4(manual.r, manual.g, 0.0, 1.0);
+
+	float green_spill = max(0.0, source_rgb.g - max(source_rgb.r, source_rgb.b));
+	source_rgb.g -= green_spill * despill * (1.0 - alpha);
+	return float4(saturate(source_rgb), alpha);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader = PSSmartMatte(v_in);
+	}
+}
